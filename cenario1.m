@@ -18,7 +18,7 @@ save_audio = 1;                 % 0:deleta arquivo de áudio; 1:salva
 
 %% Parâmetros canal MIMO/AWGN
 
-tipo_canal = 1;                 %0: AWGN; 1:Rayleigh;
+tipo_canal = 0;                 %0: AWGN; 1:Rayleigh;
 
 %% Variáveis de nome para arquivos
 
@@ -173,10 +173,6 @@ for SNR = SNR_vec
             hAWGN = comm.AWGNChannel('NoiseMethod',...
                 'Signal to noise ratio (SNR)','SNR',SNR);
             sinal_recebido = step(hAWGN,y_quantized_binario_sequencial_mod);
-        elseif tipo_canal == 1 % Canal Rayleigh            
-            chanraylei = ricianchan(2.2e-06, 1, 3, [0 1.5e-9 2.5e-9], [-3, -9, -10]);
-            sinal_recebido = filter(chanraylei, y_quantized_binario_sequencial_mod);
-            sinal_recebido = awgn(sinal_recebido, 20, 'measured');%step(rayChan, y_quantized_binario_sequencial_mod);
         end
             
       %      if plot_const_audio == 1
@@ -346,7 +342,7 @@ end
 disp('----------------------------------------------------')
 disp('----             MEDIA DOS VALORES              ----')
 for i = 1:ind_j
-    fprintf('SNR: %0.6f - P.862: %0.6f    P.563: %0.6f\n', mean_vec(i,1), mean_vec(i,2), mean_vec(i,3));
+    fprintf('SNR: %0.6f - P.862: %0.6f    P.563: %0.6f    BER: %0.6f\n', mean_vec(i,1), mean_vec(i,2), mean_vec(i,3), mean_vec(i,4));
 end
     
 
