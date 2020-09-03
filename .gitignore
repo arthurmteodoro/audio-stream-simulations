@@ -2,3 +2,4 @@ _*.txt
 Resultados/
 m_25_en_c_se01_*.wav
 *.mat
+.ignore/
