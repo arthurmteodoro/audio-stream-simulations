@@ -3,11 +3,11 @@ clear all;close all;clc;tic;warning off
 
 %% Parâmetros da Simulação
 
-runs = 3;                     % quantidade de experimentos
-modtype = 1;                    % 0:BPSK; 1:QPSK; 2: QAM
+runs = 5;                     % quantidade de experimentos
+modtype = 0;                    % 0:BPSK; 1:QPSK; 2: QAM
 QAM_ordem = 256;                 % 2; 4; 16; 64; 256
 
-SNR_vec = 0:3:30;%[1, 10, 20, 30];%[1:30:20];               % potência do ruído AWGN
+SNR_vec = 0:3:30;               % potência do ruído AWGN
 
 Niveis_quantizacao  = 2^16;     % quantidade de níves de quantização
 plot_const_audio = 0;           % plot figuras
@@ -16,9 +16,46 @@ save_data_out = 1;              % save vector data
 salva_figura = 1;               % salva plot final
 save_audio = 1;                 % 0:deleta arquivo de áudio; 1:salva
 
+%% Parâmetros Canais com Múltiplos Caminhos
+indoorA_delay = [0 50 110 170 290 310]*1e-9;
+indoorA_power = [0 -3.0 -10.0 -18.0 -26.0 -32.0];
+indootA_doppler = doppler('Flat');
+
+indoorB_delay = [0 100 200 300 500 700]*1e-9;
+indoorB_power = [0 -3.6 -7.2 -10.8 -18.0 -25.2];
+indootB_doppler = doppler('Flat');
+
+pedestrianA_delay = [0 110 190 410]*1e-9;
+pedestrianA_power = [0 -9.7 -19.2 -22.8];
+pedestrianA_doppler = doppler('Jakes');
+
+pedestrianB_delay = [0 200 800 1200 2300 3700]*1e-9;
+pedestrianB_power = [0 -0.9 -4.9 -8.0 -7.8 -23.9];
+pedestrianB_doppler = doppler('Jakes');
+
+vehicularA_delay = [0 310 710 1090 1730 2510]*1e-9;
+vehicularA_power = [0 -1.0 -9.0 -10.0 -15.0 -20.0];
+vehicularA_doppler = doppler('Jakes');
+
+vehicularB_delay = [0 300 8900 12900 17100 20000]*1e-9;
+vehicularB_power = [-2.5 0 -12.8 -10.0 -25.2 -16.0];
+vehicularB_doppler = doppler('Jakes');
+
 %% Parâmetros canal MIMO/AWGN
 
-tipo_canal = 0;                 %0: AWGN; 1:Rayleigh;
+tipo_canal = 1;                 %0: AWGN; 1:Rayleigh;
+
+fs = 3.84e6;
+pathDelays = pedestrianA_delay;
+avgPathGains = pedestrianA_power;
+dopplerEffect = pedestrianA_doppler;
+
+obejctSpeed = 5;  %in km/h
+carrierFreq = 700e6;  % frequencia da onda portadora
+
+speed_in_ms = obejctSpeed/3.6;
+c = 3e8;
+fd = (speed_in_ms * carrierFreq)/c;
 
 %% Variáveis de nome para arquivos
 
@@ -30,9 +67,9 @@ elseif modtype == 2
     modulation = sprintf('%0dQAM',QAM_ordem);
 end
 
-if tipo_canal ==0
+if tipo_canal == 0
     tipo_can = 'AWGN';
-else
+elseif tipo_canal == 1
     tipo_can = 'Rayleigh';    %para um futuro canal
 end
 
@@ -88,8 +125,8 @@ for SNR = SNR_vec
     for run = 1:runs
         bb = bb + 1;
         disp('-----------------------------------------------------------')
-        disp(sprintf('Relação Sinal Ruído (SNR) = %0.2f dB (run %0d of %0d)',...
-            SNR,run,runs))
+        fprintf('Relação Sinal Ruído (SNR) = %0.2f dB (run %0d of %0d)\n',...
+            SNR,run,runs)
         close all
         
         %% Arquivo de áudio original
@@ -164,8 +201,8 @@ for SNR = SNR_vec
         
         t_bit = (1/((1/(((1/Fs)/log2(Niveis_quantizacao))))*(7/4)));
         banda_min = 1/t_bit;
-        disp(sprintf('Banda Mínima = %.2f Hz (Periodo de Simbolo = %0.2g s)',...
-            banda_min,t_bit))
+        fprintf('Banda Mínima = %.2f Hz (Periodo de Simbolo = %0.2g s)\n',...
+            banda_min,t_bit)
         
         %% Canal AWGN 
         
@@ -173,6 +210,17 @@ for SNR = SNR_vec
             hAWGN = comm.AWGNChannel('NoiseMethod',...
                 'Signal to noise ratio (SNR)','SNR',SNR);
             sinal_recebido = step(hAWGN,y_quantized_binario_sequencial_mod);
+        elseif tipo_canal == 1
+            rayChan = comm.RayleighChannel('SampleRate', fs, ...
+                'MaximumDopplerShift', fd, ...
+                'PathDelays', pathDelays, ...
+                'AveragePathGains', avgPathGains, ...
+                'DopplerSpectrum', dopplerEffect);
+            y_reyleigh = rayChan(y_quantized_binario_sequencial_mod);
+            
+            hAWGN = comm.AWGNChannel('NoiseMethod',...
+                'Signal to noise ratio (SNR)','SNR',SNR);
+            sinal_recebido = step(hAWGN, y_reyleigh);
         end
             
       %      if plot_const_audio == 1
@@ -203,7 +251,9 @@ for SNR = SNR_vec
         sig_demodulado_bin = step(hDemod,sinal_recebido);
         
         % Collect error stats
+        
         hError = comm.ErrorRate;
+        
         errorStats = step(hError,y_quantized_binario_sequencial_coded_pad,...
             sig_demodulado_bin);
         fprintf('Error rate = %f\nNumber of errors = %d\nExponencial Erro = %.1f\n', ...
@@ -218,7 +268,7 @@ for SNR = SNR_vec
         taxa_erro_coding = sum(abs(sig_demodulado_bin_decod -...
             y_quantized_binario_sequencial))/numel(...
             y_quantized_binario_sequencial);
-        disp(sprintf('Error Rate with Coding = %f ',taxa_erro_coding))
+        fprintf('Error Rate with Coding = %f \n',taxa_erro_coding)
         
         
         %% Sequência para agrupado e conversão binário para inteiro
@@ -287,7 +337,7 @@ for SNR = SNR_vec
         [~,cmdout] = system(command);
         pos = strfind(cmdout, 'PESQ_MOS');
         MOS_valor1 = str2num(cmdout(pos+10:pos+15));
-        disp(sprintf('PESQ_MOS = %0.3f ',MOS_valor1))
+        fprintf('PESQ_MOS = %0.3f \n',MOS_valor1)
         
         
         %P563
@@ -304,7 +354,7 @@ for SNR = SNR_vec
         else
             MOS_valor2 = str2num(cmdout2(pos3+1:pos3+6));
         end
-        disp(sprintf('P563_MOS = %0.3f ',MOS_valor2))
+        fprintf('P563_MOS = %0.3f \n',MOS_valor2)
         
         if save_audio == 0
             delete(strcat(audio_file_out))
