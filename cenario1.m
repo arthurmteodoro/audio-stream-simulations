@@ -4,10 +4,10 @@ clear all;close all;clc;tic;warning off
 %% Parâmetros da Simulação
 
 runs = 5;                     % quantidade de experimentos
-modtype = 0;                    % 0:BPSK; 1:QPSK; 2: QAM
-QAM_ordem = 256;                 % 2; 4; 16; 64; 256
+modtype = 2;                    % 0:BPSK; 1:QPSK; 2: QAM
+QAM_ordem = 2;                 % 2; 4; 16; 64; 256
 
-SNR_vec = 0:3:30;               % potência do ruído AWGN
+SNR_vec = -15:3:30; %0:3:30;               % potência do ruído AWGN
 
 Niveis_quantizacao  = 2^16;     % quantidade de níves de quantização
 plot_const_audio = 0;           % plot figuras
@@ -19,11 +19,11 @@ save_audio = 1;                 % 0:deleta arquivo de áudio; 1:salva
 %% Parâmetros Canais com Múltiplos Caminhos
 indoorA_delay = [0 50 110 170 290 310]*1e-9;
 indoorA_power = [0 -3.0 -10.0 -18.0 -26.0 -32.0];
-indootA_doppler = doppler('Flat');
+indoorA_doppler = doppler('Flat');
 
 indoorB_delay = [0 100 200 300 500 700]*1e-9;
 indoorB_power = [0 -3.6 -7.2 -10.8 -18.0 -25.2];
-indootB_doppler = doppler('Flat');
+indoorB_doppler = doppler('Flat');
 
 pedestrianA_delay = [0 110 190 410]*1e-9;
 pedestrianA_power = [0 -9.7 -19.2 -22.8];
@@ -43,19 +43,24 @@ vehicularB_doppler = doppler('Jakes');
 
 %% Parâmetros canal MIMO/AWGN
 
-tipo_canal = 1;                 %0: AWGN; 1:Rayleigh;
+tipo_canal = 0;                 %0:AWGN; 1:Rayleigh; 2:Rician; 3:MIMO
 
 fs = 3.84e6;
-pathDelays = pedestrianA_delay;
-avgPathGains = pedestrianA_power;
-dopplerEffect = pedestrianA_doppler;
+kFactor = 3;
+pathDelays = [0 2e-9];
+avgPathGains = [0 -9];
+dopplerEffect = vehicularA_doppler;
 
-obejctSpeed = 5;  %in km/h
+obejctSpeed = 4;  %in km/h
 carrierFreq = 700e6;  % frequencia da onda portadora
 
 speed_in_ms = obejctSpeed/3.6;
 c = 3e8;
 fd = (speed_in_ms * carrierFreq)/c;
+
+num_tx_antennas = 4;
+num_rx_antennas = 4;
+fadding_mimo = 'Rayleigh';       % 'Rayleigh' or 'Rician'
 
 %% Variáveis de nome para arquivos
 
@@ -71,6 +76,10 @@ if tipo_canal == 0
     tipo_can = 'AWGN';
 elseif tipo_canal == 1
     tipo_can = 'Rayleigh';    %para um futuro canal
+elseif tipo_canal == 2
+    tipo_can = 'Rician';
+elseif tipo_canal == 3
+    tipo_can = 'MIMO';
 end
 
 time_label = char(datetime('now','TimeZone','local',...
@@ -194,6 +203,16 @@ for SNR = SNR_vec
                 zeros(pad,1)]; % acrescenta bits extras
         end
         
+        if tipo_canal == 3 && num_tx_antennas == 4
+           resto = mod(size(y_quantized_binario_sequencial_coded_pad), 3);
+           while resto ~= 0
+               y_quantized_binario_sequencial_coded_pad = ...
+                   [y_quantized_binario_sequencial_coded_pad; 0];
+               pad = pad + 1;
+               resto = mod(size(y_quantized_binario_sequencial_coded_pad), 3);
+           end
+        end
+        
         % Modulate the data
         y_quantized_binario_sequencial_mod = step(hModulator,...
             y_quantized_binario_sequencial_coded_pad);
@@ -216,14 +235,47 @@ for SNR = SNR_vec
                 'PathDelays', pathDelays, ...
                 'AveragePathGains', avgPathGains, ...
                 'DopplerSpectrum', dopplerEffect);
-            y_reyleigh = rayChan(y_quantized_binario_sequencial_mod);
+            y_rayleigh = rayChan(y_quantized_binario_sequencial_mod);
             
             hAWGN = comm.AWGNChannel('NoiseMethod',...
                 'Signal to noise ratio (SNR)','SNR',SNR);
-            sinal_recebido = step(hAWGN, y_reyleigh);
+            sinal_recebido = step(hAWGN, y_rayleigh);
+        elseif tipo_canal == 2
+            ricianChan = comm.RicianChannel('SampleRate', fs, ...
+                'MaximumDopplerShift', fd, ...
+                'PathDelays', pathDelays, ...
+                'AveragePathGains', avgPathGains, ...
+                'KFactor', kFactor, ...
+                'DopplerSpectrum', dopplerEffect);
+            y_rician = ricianChan(y_quantized_binario_sequencial_mod);
+            
+            hAWGN = comm.AWGNChannel('NoiseMethod',...
+                'Signal to noise ratio (SNR)','SNR',SNR);
+            sinal_recebido = step(hAWGN, y_rician);
+        elseif tipo_canal == 3
+            hOSTBCEnc = comm.OSTBCEncoder('NumTransmitAntennas', num_tx_antennas, 'SymbolRate', 3/4);
+            encData = step(hOSTBCEnc, y_quantized_binario_sequencial_mod);
+            
+            mimochan = comm.MIMOChannel('SampleRate', fs, ...
+                'MaximumDopplerShift', fd, ...
+                'PathDelays', pathDelays, ...
+                'AveragePathGains', avgPathGains, ...
+                'FadingDistribution', 'Rayleigh', ...
+                'KFactor', kFactor, ...
+                'DopplerSpectrum', dopplerEffect, ...
+                'NumTransmitAntennas', num_tx_antennas, ...
+                'NumReceiveAntennas', num_rx_antennas, ...
+                'SpatialCorrelationSpecification', 'None', ...
+                'PathGainsOutputPort', true);
+            
+            [y_mimo, pathGains] = mimochan(encData);
+            
+            hAWGN = comm.AWGNChannel('NoiseMethod',...
+                'Signal to noise ratio (SNR)','SNR',SNR);
+            sinal_recebido = step(hAWGN, y_mimo);
         end
             
-      %      if plot_const_audio == 1
+            if plot_const_audio == 1
                 figure;hold on
                 scatter(real(sinal_recebido),imag(sinal_recebido),'b.')
                 scatter(real(y_quantized_binario_sequencial_mod),...
@@ -233,10 +285,19 @@ for SNR = SNR_vec
                 xlim([-1.5 1.5])
                 ylim([-1.5 1.5])
                 drawnow
-       %     end
+            end
             
         
         %% Demodulação
+        
+        if tipo_canal == 3
+            hOSTBCComb = comm.OSTBCCombiner(...
+                'NumTransmitAntennas', num_tx_antennas,...
+                'NumReceiveAntennas', num_rx_antennas);
+            
+            chEst = squeeze(sum(pathGains, 2));
+            sinal_recebido = step(hOSTBCComb, sinal_recebido, chEst);
+        end
         
         if modtype == 0
             hDemod = comm.BPSKDemodulator;
@@ -261,9 +322,7 @@ for SNR = SNR_vec
         
         sig_demodulado_bin = sig_demodulado_bin(1:end-pad);
         
-        
-            sig_demodulado_bin_decod = sig_demodulado_bin;
-
+        sig_demodulado_bin_decod = sig_demodulado_bin;
         
         taxa_erro_coding = sum(abs(sig_demodulado_bin_decod -...
             y_quantized_binario_sequencial))/numel(...
